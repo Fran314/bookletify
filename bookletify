@@ -100,7 +100,7 @@ def main():
 
     reader = None
     if args.input == "-":
-        reader = PdfReader(sys.stdin.buffer)
+        reader = PdfReader(io.BytesIO(sys.stdin.buffer.read()))
     else:
         if not os.path.isfile(args.input):
             print(f"file {args.input} does not exist")
@@ -125,7 +125,10 @@ def main():
     pages = []
     for i in range(n):
         prog(i, n)
-        pages.append(reader.pages[i])
+        page = reader.pages[i]
+        page.transfer_rotation_to_content()
+        page.annotations = None
+        pages.append(page)
     prog(n, n)
 
     while len(pages) % 4 != 0:
@@ -138,31 +141,30 @@ def main():
     output = PdfWriter()
     info("\nRearranging...")
 
-    def get_scaling(page):
-        sx = float(smallwidth - bindingwidth) / (float(page.mediabox.width) - tr - tl)
-        sy = float(smallheight) / (float(page.mediabox.height) - tt - tb)
-        return (sx, sy)
-
     slotwidth = smallheight
     slotheight = smallwidth - bindingwidth
     topslot = smallwidth + bindingwidth
     bottomslot = 0
 
     def place(page, slotbottom, is_back_face):
-        (sx, sy) = get_scaling(page)
+        box = page.cropbox
+        srcleft = float(box.left) + tl
+        srcbottom = float(box.bottom) + tb
+        sx = slotheight / (float(box.width) - tl - tr)
+        sy = slotwidth / (float(box.height) - tt - tb)
         if is_back_face:
             t = (
                 Transformation()
                 .scale(sx, sy)
                 .rotate(90)
-                .translate(slotwidth + tb * sy, slotbottom - tl * sx)
+                .translate(slotwidth + srcbottom * sy, slotbottom - srcleft * sx)
             )
         else:
             t = (
                 Transformation()
                 .scale(sx, sy)
                 .rotate(-90)
-                .translate(-tb * sy, slotbottom + slotheight + tl * sx)
+                .translate(-srcbottom * sy, slotbottom + slotheight + srcleft * sx)
             )
         page.add_transformation(t)
         page.cropbox.lower_left = (0, slotbottom)
