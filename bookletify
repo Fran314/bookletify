@@ -113,9 +113,6 @@ def main():
     smallheight = fullwidth
     # Convert mm to pixels at 72 dpi
     bindingwidth = args.binding_margin * 72.0 / 25.4
-    smallblank = PageObject.create_blank_page(
-        width=smallwidth - bindingwidth, height=smallheight
-    )
 
     tt = args.trim[0] * 72.0 / 25.4
     tr = args.trim[1] * 72.0 / 25.4
@@ -132,7 +129,11 @@ def main():
     prog(n, n)
 
     while len(pages) % 4 != 0:
-        pages.append(smallblank)
+        pages.append(
+            PageObject.create_blank_page(
+                width=smallwidth - bindingwidth, height=smallheight
+            )
+        )
 
     output = PdfWriter()
     info("\nRearranging...")
@@ -142,59 +143,39 @@ def main():
         sy = float(smallheight) / (float(page.mediabox.height) - tt - tb)
         return (sx, sy)
 
+    slotwidth = smallheight
+    slotheight = smallwidth - bindingwidth
+    topslot = smallwidth + bindingwidth
+    bottomslot = 0
+
+    def place(page, slotbottom, is_back_face):
+        (sx, sy) = get_scaling(page)
+        if is_back_face:
+            t = (
+                Transformation()
+                .scale(sx, sy)
+                .rotate(90)
+                .translate(slotwidth + tb * sy, slotbottom - tl * sx)
+            )
+        else:
+            t = (
+                Transformation()
+                .scale(sx, sy)
+                .rotate(-90)
+                .translate(-tb * sy, slotbottom + slotheight + tl * sx)
+            )
+        page.add_transformation(t)
+        page.cropbox.lower_left = (0, slotbottom)
+        page.cropbox.upper_right = (slotwidth, slotbottom + slotheight)
+        return page
+
     m = len(pages)
     for i in range(int(m / 2)):
         prog(i, int(m / 2))
         new_page = PageObject.create_blank_page(width=fullwidth, height=fullheight)
-        if i % 2 == 0:
-            (sx, sy) = get_scaling(pages[m - 1 - i])
-            t = (
-                Transformation()
-                .scale(sx, sy)
-                .rotate(-90)
-                .translate(-tb * sy, fullheight + tl * sx)
-            )
-            pages[m - 1 - i].add_transformation(t)
-            pages[m - 1 - i].cropbox.upper_right = (smallheight, fullheight)
-            pages[m - 1 - i].cropbox.lower_left = (0, smallwidth + bindingwidth)
-            new_page.merge_page(pages[m - 1 - i])
-
-            (sx, sy) = get_scaling(pages[i])
-            t = (
-                Transformation()
-                .scale(sx, sy)
-                .rotate(-90)
-                .translate(-tb * sy, smallwidth - bindingwidth + tl * sx)
-            )
-            pages[i].add_transformation(t)
-            pages[i].cropbox.upper_right = (smallheight, smallwidth - bindingwidth)
-            pages[i].cropbox.lower_left = (0, 0)
-            new_page.merge_page(pages[i])
-        else:
-            (sx, sy) = get_scaling(pages[m - 1 - i])
-            t = (
-                Transformation()
-                .scale(sx, sy)
-                .rotate(90)
-                .translate(smallheight + tb * sy, smallwidth + bindingwidth - tl * sx)
-            )
-            pages[m - 1 - i].add_transformation(t)
-            pages[m - 1 - i].cropbox.upper_right = (smallheight, fullheight)
-            pages[m - 1 - i].cropbox.lower_left = (0, smallwidth + bindingwidth)
-            new_page.merge_page(pages[m - 1 - i])
-
-            (sx, sy) = get_scaling(pages[i])
-            t = (
-                Transformation()
-                .scale(sx, sy)
-                .rotate(90)
-                .translate(smallheight + tb * sy, 0 - tl * sx)
-            )
-            pages[i].add_transformation(t)
-            pages[i].cropbox.upper_right = (smallheight, smallwidth - bindingwidth)
-            pages[i].cropbox.lower_left = (0, 0)
-            new_page.merge_page(pages[i])
-
+        is_back_face = i % 2 == 1
+        new_page.merge_page(place(pages[m - 1 - i], topslot, is_back_face))
+        new_page.merge_page(place(pages[i], bottomslot, is_back_face))
         output.add_page(new_page)
     prog(int(m / 2), int(m / 2))
 
