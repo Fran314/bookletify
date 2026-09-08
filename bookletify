@@ -4,7 +4,8 @@ import os
 import sys
 import io
 import argparse
-from pypdf import PageObject, PdfReader, PdfWriter, PaperSize, Transformation
+from pypdf import PageObject, PdfWriter, PaperSize, Transformation
+from pypdf.generic import RectangleObject
 
 
 def main():
@@ -98,14 +99,17 @@ def main():
     def prog(curr, max):
         info(f"\r{curr} / {max}", "\n" if curr == max else "")
 
-    reader = None
+    # the input is opened as a writer because pypdf only supports transforming
+    # pages that belong to a writer. Transforming pages owned by a PdfReader
+    # rewrites objects in the reader cache and is deprecated.
+    source = None
     if args.input == "-":
-        reader = PdfReader(io.BytesIO(sys.stdin.buffer.read()))
+        source = PdfWriter(clone_from=io.BytesIO(sys.stdin.buffer.read()))
     else:
         if not os.path.isfile(args.input):
             print(f"file {args.input} does not exist")
             exit(1)
-        reader = PdfReader(args.input)
+        source = PdfWriter(clone_from=args.input)
 
     fullwidth = getattr(PaperSize, args.size).width
     fullheight = getattr(PaperSize, args.size).height
@@ -121,13 +125,17 @@ def main():
 
     # Read the input
     info("Reading...")
-    n = len(reader.pages)
+    n = len(source.pages)
     pages = []
     for i in range(n):
         prog(i, n)
-        page = reader.pages[i]
+        page = source.pages[i]
         page.transfer_rotation_to_content()
         page.annotations = None
+        box = page.cropbox
+        page.cropbox = RectangleObject(
+            (box.left + tl, box.bottom + tb, box.right - tr, box.top - tt)
+        )
         pages.append(page)
     prog(n, n)
 
@@ -146,12 +154,12 @@ def main():
     topslot = smallwidth + bindingwidth
     bottomslot = 0
 
-    def place(page, slotbottom, is_back_face):
+    def place(sheet, page, slotbottom, is_back_face):
         box = page.cropbox
-        srcleft = float(box.left) + tl
-        srcbottom = float(box.bottom) + tb
-        sx = slotheight / (float(box.width) - tl - tr)
-        sy = slotwidth / (float(box.height) - tt - tb)
+        srcleft = float(box.left)
+        srcbottom = float(box.bottom)
+        sx = slotheight / float(box.width)
+        sy = slotwidth / float(box.height)
         if is_back_face:
             t = (
                 Transformation()
@@ -166,19 +174,15 @@ def main():
                 .rotate(-90)
                 .translate(-srcbottom * sy, slotbottom + slotheight + srcleft * sx)
             )
-        page.add_transformation(t)
-        page.cropbox.lower_left = (0, slotbottom)
-        page.cropbox.upper_right = (slotwidth, slotbottom + slotheight)
-        return page
+        sheet.merge_transformed_page(page, t)
 
     m = len(pages)
     for i in range(int(m / 2)):
         prog(i, int(m / 2))
-        new_page = PageObject.create_blank_page(width=fullwidth, height=fullheight)
+        sheet = output.add_blank_page(width=fullwidth, height=fullheight)
         is_back_face = i % 2 == 1
-        new_page.merge_page(place(pages[m - 1 - i], topslot, is_back_face))
-        new_page.merge_page(place(pages[i], bottomslot, is_back_face))
-        output.add_page(new_page)
+        place(sheet, pages[m - 1 - i], topslot, is_back_face)
+        place(sheet, pages[i], bottomslot, is_back_face)
     prog(int(m / 2), int(m / 2))
 
     info("\nSaving...")
